@@ -84,7 +84,7 @@ class Application(tornado.web.Application):
 
         ]
         settings = dict(
-            title="Long Poll Test",
+            title="Long Poll Framework",
             cookie_secret="43oETzKXQAGaYdkL5gEmGeJJFuYh7EQnp2XdTP1o/Vo=",
             template_path=os.path.join(os.path.dirname(__file__), "templates"),
             static_path=os.path.join(os.path.dirname(__file__), "static"),
