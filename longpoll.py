@@ -54,6 +54,7 @@ class MainHandler(tornado.web.RequestHandler,QueueMixin):
         self.submitMessage("client connected")
         self.render("maintemplate.html")
 
+# Async handler for the long poller
 class UpdateHandler(tornado.web.RequestHandler,QueueMixin):
     @tornado.web.asynchronous
     
@@ -66,7 +67,7 @@ class UpdateHandler(tornado.web.RequestHandler,QueueMixin):
             return
         self.finish(response)
       
-
+# Handler which submits content to get pushed out
 class SubmitHandler(tornado.web.RequestHandler,QueueMixin):
     def post(self):
         self.submitMessage(self.get_argument("message"))
@@ -84,7 +85,7 @@ class Application(tornado.web.Application):
 
         ]
         settings = dict(
-            title="Long Poll Test",
+            title="Long Poll Framework",
             cookie_secret="43oETzKXQAGaYdkL5gEmGeJJFuYh7EQnp2XdTP1o/Vo=",
             template_path=os.path.join(os.path.dirname(__file__), "templates"),
             static_path=os.path.join(os.path.dirname(__file__), "static"),
