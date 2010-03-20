@@ -1,4 +1,5 @@
 # Long Poll Framework
+Version 0.1
 
 This is a Tornado application which provides a good basis on which to build a long polling framework.
 
