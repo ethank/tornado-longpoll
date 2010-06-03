@@ -22,9 +22,11 @@ import tornado.ioloop
 import tornado.options
 import tornado.web
 import os.path
-import Queue
+from multiprocessing import Pool, Queue
 import uuid
+import os
 from time import time
+import time
 from tornado.options import define, options
 
 define("port", default=8089, help="run on the given port", type=int)
@@ -34,24 +36,37 @@ class QueueMixin(object):
     waiters = []
     cache = []
     
-    def waitForMessage(self,callback):
+    def waitForMessage(self,callback,token):
         cls = QueueMixin
-        cls.waiters.append(callback)
-        
-    def submitMessage(self,message):
+        waiter = {'callback':callback,'token':token}
+
+        cls.waiters.append(waiter)
+
+    def submitMessage(self,message,token):
         cls = QueueMixin
-        message = "{'message':'%s'}" % message
-        for callback in cls.waiters:
+        for waiter in cls.waiters:
             try:
-                callback(message)
+                
+                callback = waiter['callback']
+                waiter_token = waiter['token']
+                message_to_send = "{'message':'%s : from: %s, to: %s'}" % (message,token,waiter_token)
+                print message_to_send
+                if waiter_token == token:
+                    callback(message_to_send)
+                    cls.waiters.remove(waiter)
             except:
-                loggin.error("error")
-        cls.waiters = []
+                logging.error("error")
+        #cls.waiters = []
         
         
 class MainHandler(tornado.web.RequestHandler,QueueMixin):
     def get(self):
-        self.submitMessage("client connected")
+        # Set cookie
+
+        if not self.get_secure_cookie("_session"):
+            cookie = str(uuid.uuid4())
+            self.set_secure_cookie("_session",cookie,1)
+        self.submitMessage("client connected",self.get_secure_cookie("_session"))
         self.render("maintemplate.html")
 
 # Async handler for the long poller
@@ -59,21 +74,38 @@ class UpdateHandler(tornado.web.RequestHandler,QueueMixin):
     @tornado.web.asynchronous
     
     def post(self):
-        self.waitForMessage(self.async_callback(self.on_response))
+        self.waitForMessage(self.async_callback(self.on_response),self.get_secure_cookie("_session"))
         
         
     def on_response(self,response):
         if self.request.connection.stream.closed():
             return
         self.finish(response)
+
+def demoFunction(message):
+    # this is where the rabbitmq stuff would happen. pass in the channel
+    message = "<strong>%s</strong>" % message
+    time.sleep(1)
+    return message
       
 # Handler which submits content to get pushed out
 class SubmitHandler(tornado.web.RequestHandler,QueueMixin):
+    @tornado.web.asynchronous
+    
     def post(self):
-        self.submitMessage(self.get_argument("message"))
+        #process
+        message = self.get_argument("message")
+        p = self.application.settings.get('pool')
+        p.apply_async(demoFunction,[message],callback=self.async_callback(self.on_done))
+        
+        
+    
+    def on_done(self,message):
+        self.submitMessage(message,self.get_secure_cookie("_session"))
         
     def get(self):
-        self.submitMessage("test message")
+      
+        self.submitMessage("test message",self.get_secure_cookie("_session"))
 
 
 class Application(tornado.web.Application):
@@ -90,6 +122,7 @@ class Application(tornado.web.Application):
             template_path=os.path.join(os.path.dirname(__file__), "templates"),
             static_path=os.path.join(os.path.dirname(__file__), "static"),
             xsrf_cookies=True,
+            pool = Pool(4)
         )
 
         tornado.web.Application.__init__(self, handlers, **settings)
