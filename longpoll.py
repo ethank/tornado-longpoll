@@ -83,8 +83,9 @@ class UpdateHandler(tornado.web.RequestHandler,QueueMixin):
         self.finish(response)
 
 def demoFunction(message):
+    # this is where the rabbitmq stuff would happen. pass in the channel
     message = "<strong>%s</strong>" % message
-    time.sleep(0.2)
+    time.sleep(1)
     return message
       
 # Handler which submits content to get pushed out
