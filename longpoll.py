@@ -38,6 +38,7 @@ class QueueMixin(object):
     
     def waitForMessage(self,callback,token):
         cls = QueueMixin
+        # create method for identifying
         waiter = {'callback':callback,'token':token}
 
         cls.waiters.append(waiter)
@@ -51,8 +52,10 @@ class QueueMixin(object):
                 waiter_token = waiter['token']
                 message_to_send = "{'message':'%s : from: %s, to: %s'}" % (message,token,waiter_token)
                 print message_to_send
+                # if the waiter is the same as the sender, send back response
                 if waiter_token == token:
                     callback(message_to_send)
+                    # waiter is now over, it'll rehook in
                     cls.waiters.remove(waiter)
             except:
                 logging.error("error")
@@ -62,7 +65,7 @@ class QueueMixin(object):
 class MainHandler(tornado.web.RequestHandler,QueueMixin):
     def get(self):
         # Set cookie
-
+        
         if not self.get_secure_cookie("_session"):
             cookie = str(uuid.uuid4())
             self.set_secure_cookie("_session",cookie,1)
@@ -74,6 +77,7 @@ class UpdateHandler(tornado.web.RequestHandler,QueueMixin):
     @tornado.web.asynchronous
     
     def post(self):
+        # wait for the message, sending in the session ID
         self.waitForMessage(self.async_callback(self.on_response),self.get_secure_cookie("_session"))
         
         
@@ -93,7 +97,7 @@ class SubmitHandler(tornado.web.RequestHandler,QueueMixin):
     @tornado.web.asynchronous
     
     def post(self):
-        #process
+        #process asynchronously
         message = self.get_argument("message")
         p = self.application.settings.get('pool')
         p.apply_async(demoFunction,[message],callback=self.async_callback(self.on_done))
@@ -101,6 +105,7 @@ class SubmitHandler(tornado.web.RequestHandler,QueueMixin):
         
     
     def on_done(self,message):
+        # after processing, send back to the client the processed response
         self.submitMessage(message,self.get_secure_cookie("_session"))
         
     def get(self):
