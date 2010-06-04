@@ -22,14 +22,53 @@ import tornado.ioloop
 import tornado.options
 import tornado.web
 import os.path
+
 from multiprocessing import Pool, Queue
 import uuid
 import os
 from time import time
 import time
 from tornado.options import define, options
+from amqplib import client_0_8 as amqp
+from amqplib.client_0_8 import Message
+
+import tamqp
+
 
 define("port", default=8089, help="run on the given port", type=int)
+
+#static methods
+def demoFunction(message):
+    # this is where the rabbitmq stuff would happen. pass in the channel
+    message = "<strong>%s</strong>" % message
+    time.sleep(1)
+    return message
+    
+    
+def sendToQueue(message):
+    chan = channel_factory()
+    msg = amqp.Message(message)
+    chan.basic_publish(msg, exchange="router", routing_key="artist.push")
+    
+def amqp_setup():
+    conn = amqp.Connection(host="localhost:5672",userid="guest",password="guest",virtual_host="/",insist=False)
+    chan = conn.channel()
+    
+    chan.exchange_declare(exchange="router",type="topic",durable=True,auto_delete=False)
+    chan.queue_declare(queue="beacon_server",durable=True,exclusive=False,auto_delete=False)
+    
+    chan.queue_bind(queue="beacon_server",exchange="router",routing_key="beacon.#")
+    
+    
+def channel_factory():
+    conn = amqp.Connection(host="localhost:5672",userid="guest",password="guest",virtual_host="/",insist=False)
+    return conn.channel()
+
+listeners= []
+def notify_listeners(msg):
+    for l in list(listeners):
+
+        l(msg)
 
 
 class QueueMixin(object):
@@ -72,6 +111,36 @@ class MainHandler(tornado.web.RequestHandler,QueueMixin):
         self.submitMessage("client connected",self.get_secure_cookie("_session"))
         self.render("maintemplate.html")
 
+class QueueMainHandler(tornado.web.RequestHandler):
+    def get(self):
+        self.render("queue.html")
+
+
+# Async handler for the queue
+class UpdateQueueHandler(tornado.web.RequestHandler):
+    @tornado.web.asynchronous
+    def post(self):
+        listeners.append(self.on_response)
+        
+    def on_response(self,msg):
+        listeners.remove(self.on_response)
+        if self.request.connection.stream.closed():
+            return
+        self.finish(msg.body)
+
+class PubHandler(tornado.web.RequestHandler):
+    def get(self):
+        self.write("publishing...")
+        message_to_send = "{'message':'%s'}" % self.get_argument("message")
+        msg = Message(message_to_send)
+        producer.publish(msg, exchange="router",routing_key="beacon.test")
+    
+    def post(self):
+        message_to_send = "{'message':'%s'}" % self.get_argument("message")
+        msg = Message(message_to_send)
+        producer.publish(msg, exchange="router",routing_key="beacon.test")
+
+
 # Async handler for the long poller
 class UpdateHandler(tornado.web.RequestHandler,QueueMixin):
     @tornado.web.asynchronous
@@ -86,20 +155,17 @@ class UpdateHandler(tornado.web.RequestHandler,QueueMixin):
             return
         self.finish(response)
 
-def demoFunction(message):
-    # this is where the rabbitmq stuff would happen. pass in the channel
-    message = "<strong>%s</strong>" % message
-    time.sleep(1)
-    return message
+
       
 # Handler which submits content to get pushed out
 class SubmitHandler(tornado.web.RequestHandler,QueueMixin):
-    @tornado.web.asynchronous
+    #@tornado.web.asynchronous
     
     def post(self):
         #process asynchronously
         message = self.get_argument("message")
         p = self.application.settings.get('pool')
+
         p.apply_async(demoFunction,[message],callback=self.async_callback(self.on_done))
         
         
@@ -118,9 +184,15 @@ class Application(tornado.web.Application):
         handlers = [
             (r"/",MainHandler),
             (r"/update",UpdateHandler),
-            (r"/submit",SubmitHandler)
+            (r"/submit",SubmitHandler),
+            (r"/monitor",UpdateQueueHandler),
+            (r"/pub",PubHandler),
+            (r"/queue",QueueMainHandler)
 
         ]
+        
+
+        
         settings = dict(
             title="Long Poll Framework",
             cookie_secret="43oETzKXQAGaYdkL5gEmGeJJFuYh7EQnp2XdTP1o/Vo=",
@@ -135,6 +207,11 @@ class Application(tornado.web.Application):
 
 
 def main():
+    global listeners, consumer, producer
+    amqp_setup()
+    consumer = tamqp.AmqpConsumer(channel_factory,"beacon_server",notify_listeners)
+    producer = tamqp.AmqpProducer(channel_factory)
+    
     tornado.options.parse_command_line()
     http_server = tornado.httpserver.HTTPServer(Application())
     http_server.listen(options.port)

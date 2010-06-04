@@ -4,7 +4,7 @@ jQuery.submitMessage = function( message ) {
     args._xsrf = getCookie("_xsrf");
     
     $.ajax({
-     url: "/submit",
+     url: "/pub",
      data:$.param(args),
      type: "POST",
      dataType:"text",
@@ -15,7 +15,7 @@ jQuery.submitMessage = function( message ) {
 }
 
 
-var updater = $.longPoll('/update');
+var updater = $.longPoll('/monitor');
 updater.callbacks.push(
     function(response) {
         
