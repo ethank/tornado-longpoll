@@ -38,18 +38,16 @@ import tamqp
 define("port", default=8089, help="run on the given port", type=int)
 
 #static methods
+
+
+#demos a async multiproc function
 def demoFunction(message):
     # this is where the rabbitmq stuff would happen. pass in the channel
     message = "<strong>%s</strong>" % message
     time.sleep(1)
     return message
     
-    
-def sendToQueue(message):
-    chan = channel_factory()
-    msg = amqp.Message(message)
-    chan.basic_publish(msg, exchange="router", routing_key="artist.push")
-    
+# setup the amqp library    
 def amqp_setup():
     conn = amqp.Connection(host="localhost:5672",userid="guest",password="guest",virtual_host="/",insist=False)
     chan = conn.channel()
@@ -59,11 +57,12 @@ def amqp_setup():
     
     chan.queue_bind(queue="beacon_server",exchange="router",routing_key="beacon.#")
     
-    
+# simple channel factory    
 def channel_factory():
     conn = amqp.Connection(host="localhost:5672",userid="guest",password="guest",virtual_host="/",insist=False)
     return conn.channel()
 
+# method to notify listeners to the queue. could use some routing here?
 listeners= []
 def notify_listeners(msg):
     for l in list(listeners):
@@ -100,7 +99,8 @@ class QueueMixin(object):
                 logging.error("error")
         #cls.waiters = []
         
-        
+
+# Main handler for the non-rabbitmq async long-poll        
 class MainHandler(tornado.web.RequestHandler,QueueMixin):
     def get(self):
         # Set cookie
@@ -111,12 +111,16 @@ class MainHandler(tornado.web.RequestHandler,QueueMixin):
         self.submitMessage("client connected",self.get_secure_cookie("_session"))
         self.render("maintemplate.html")
 
+# Main handler for the Queue based long poll
 class QueueMainHandler(tornado.web.RequestHandler):
     def get(self):
+        if not self.get_secure_cookie("_session"):
+            cookie = str(uuid.uuid4())
+            self.set_secure_cookie("_session",cookie,1)
         self.render("queue.html")
 
 
-# Async handler for the queue
+# Async handler for the queue, bound to by the long poll javascript
 class UpdateQueueHandler(tornado.web.RequestHandler):
     @tornado.web.asynchronous
     def post(self):
@@ -128,20 +132,21 @@ class UpdateQueueHandler(tornado.web.RequestHandler):
             return
         self.finish(msg.body)
 
+# Handler for publishing to rabbitMQ
 class PubHandler(tornado.web.RequestHandler):
-    def get(self):
-        self.write("publishing...")
-        message_to_send = "{'message':'%s'}" % self.get_argument("message")
+    
+    def send(self,message):
+        message_to_send = "{'message':'%s'}" % message
         msg = Message(message_to_send)
         producer.publish(msg, exchange="router",routing_key="beacon.test")
+        
+    def get(self):
+        self.send(self.get_argument("message"))
     
     def post(self):
-        message_to_send = "{'message':'%s'}" % self.get_argument("message")
-        msg = Message(message_to_send)
-        producer.publish(msg, exchange="router",routing_key="beacon.test")
+        self.send(self.get_argument("message"))
 
-
-# Async handler for the long poller
+# Async handler for the long poller, non rabbitmq
 class UpdateHandler(tornado.web.RequestHandler,QueueMixin):
     @tornado.web.asynchronous
     
@@ -165,11 +170,11 @@ class SubmitHandler(tornado.web.RequestHandler,QueueMixin):
         #process asynchronously
         message = self.get_argument("message")
         p = self.application.settings.get('pool')
-
+        # spawn a new thread from the main poll to execute demo function, argument message, with callback
         p.apply_async(demoFunction,[message],callback=self.async_callback(self.on_done))
         
         
-    
+    # callback from async multiproc
     def on_done(self,message):
         # after processing, send back to the client the processed response
         self.submitMessage(message,self.get_secure_cookie("_session"))
